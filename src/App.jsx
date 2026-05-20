@@ -75,21 +75,32 @@ function AuthScreen({ onAuth }) {
     setLoading(true)
     try {
       if (mode === 'signup') {
+        const emailRedirectTo = import.meta.env.VITE_AUTH_REDIRECT_URL || window.location.origin
+
         const { data, error } = await supabase.auth.signUp({
           email: form.email,
           password: form.password,
-          options: { data: { shop_name: form.shopName } },
+          options: {
+            emailRedirectTo,
+            data: { shop_name: form.shopName },
+          },
         })
         if (error) throw error
+
         if (data.user) {
-          // Create shop record
+          // Create shop record even if email verification is pending
           const { error: shopErr } = await supabase.from('shops').insert({
             user_id: data.user.id,
             shop_name: form.shopName,
           })
           if (shopErr) throw shopErr
+        }
+
+        if (data.session) {
           showToast('Account created! Logging you in…', 'success')
           onAuth(data.user, form.shopName)
+        } else {
+          showToast('Account created! Check your email to verify your account.', 'success')
         }
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({
@@ -106,7 +117,11 @@ function AuthScreen({ onAuth }) {
         onAuth(data.user, shop?.shop_name || 'My Shop')
       }
     } catch (err) {
-      showToast(err.message || 'Something went wrong')
+      const message = err?.message || 'Something went wrong'
+      const toastMessage = message.toLowerCase().includes('rate limit')
+        ? 'Email rate limit exceeded. Please wait a few minutes before retrying.'
+        : message
+      showToast(toastMessage)
     } finally {
       setLoading(false)
     }
