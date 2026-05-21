@@ -86,21 +86,16 @@ function AuthScreen({ onAuth }) {
           },
         })
         if (error) throw error
-
-        if (data.user) {
-          // Create shop record even if email verification is pending
+          if (data.user) {
+          // Create shop record
           const { error: shopErr } = await supabase.from('shops').insert({
             user_id: data.user.id,
             shop_name: form.shopName,
           })
           if (shopErr) throw shopErr
-        }
-
-        if (data.session) {
           showToast('Account created! Logging you in…', 'success')
-          onAuth(data.user, form.shopName)
-        } else {
-          showToast('Account created! Check your email to verify your account.', 'success')
+          // notify parent to refresh session
+          onAuth()
         }
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({
@@ -114,14 +109,11 @@ function AuthScreen({ onAuth }) {
           .select('shop_name')
           .eq('user_id', data.user.id)
           .single()
-        onAuth(data.user, shop?.shop_name || 'My Shop')
+        // notify parent to refresh session
+        onAuth()
       }
     } catch (err) {
-      const message = err?.message || 'Something went wrong'
-      const toastMessage = message.toLowerCase().includes('rate limit')
-        ? 'Email rate limit exceeded. Please wait a few minutes before retrying.'
-        : message
-      showToast(toastMessage)
+      showToast(err.message || 'Something went wrong')
     } finally {
       setLoading(false)
     }
@@ -182,11 +174,11 @@ function AuthScreen({ onAuth }) {
 }
 
 // ─── Dashboard ───────────────────────────────────────────────
-function Dashboard({ transactions, range, onRange, onDelete, onEdit, loading }) {
-  const filtered = useFiltered(transactions, range)
+function Dashboard({ transactions, range, onRange, onDelete, onEdit, loading, toDate, setToDate }) {
+  const filtered = useFiltered(transactions, range, toDate)
   const summary = useSummary(filtered)
 
-  const rangeLabel = { daily: "Today", weekly: "This Week", monthly: "This Month" }[range]
+  const rangeLabel = { daily: "Today", weekly: "This Week", monthly: "This Month", all: 'All Time' }[range]
 
   return (
     <>
@@ -229,11 +221,11 @@ function Dashboard({ transactions, range, onRange, onDelete, onEdit, loading }) 
 }
 
 // ─── Entries Tab ─────────────────────────────────────────────
-function EntriesTab({ transactions, range, onRange, onDelete, onEdit, loading }) {
-  const filtered = useFiltered(transactions, range)
+function EntriesTab({ transactions, range, onRange, onDelete, onEdit, loading, toDate, setToDate }) {
+  const filtered = useFiltered(transactions, range, toDate)
   return (
     <>
-      <RangePills range={range} onRange={onRange} />
+      <RangePills range={range} onRange={onRange} toDate={toDate} setToDate={setToDate} />
       {loading ? (
         <div style={{ textAlign: 'center', padding: '3rem', color: C.muted }}>Loading…</div>
       ) : filtered.length === 0 ? (
@@ -250,8 +242,8 @@ function EntriesTab({ transactions, range, onRange, onDelete, onEdit, loading })
 }
 
 // ─── Reports Tab ─────────────────────────────────────────────
-function ReportsTab({ transactions, range, onRange, shopName, loading }) {
-  const filtered = useFiltered(transactions, range)
+function ReportsTab({ transactions, range, onRange, shopName, loading, toDate, setToDate }) {
+  const filtered = useFiltered(transactions, range, toDate)
   const summary = useSummary(filtered)
   const [exporting, setExporting] = useState(false)
 
@@ -262,8 +254,8 @@ function ReportsTab({ transactions, range, onRange, shopName, loading }) {
       const { default: autoTable } = await import('jspdf-autotable')
 
       const doc = new jsPDF({ unit: 'mm', format: 'a4' })
-      const rangeLabel = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' }[range]
-      const dateStr = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })
+      const rangeLabel = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', all: 'All Time' }[range]
+      const dateStr = new Date(toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })
 
       // Header
       doc.setFontSize(20)
@@ -323,7 +315,7 @@ function ReportsTab({ transactions, range, onRange, shopName, loading }) {
 
   return (
     <>
-      <RangePills range={range} onRange={onRange} />
+      <RangePills range={range} onRange={onRange} toDate={toDate} setToDate={setToDate} />
 
       <div style={s.card}>
         <div style={{ fontSize: 12, fontWeight: 700, color: C.muted, marginBottom: 14, textTransform: 'uppercase', letterSpacing: 0.5 }}>
@@ -601,22 +593,32 @@ function FieldGroup({ label, children, last }) {
   )
 }
 
-function RangePills({ range, onRange }) {
+function RangePills({ range, onRange, toDate, setToDate }) {
   return (
     <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-      {['daily', 'weekly', 'monthly'].map((r) => (
+      {['daily', 'weekly', 'monthly', 'all'].map((r) => (
         <button key={r} style={s.pill(range === r)} onClick={() => onRange(r)}>
-          {r.charAt(0).toUpperCase() + r.slice(1)}
+          {r === 'all' ? 'All' : r.charAt(0).toUpperCase() + r.slice(1)}
         </button>
       ))}
+      {range === 'all' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <label style={{ fontSize: 12, color: C.muted }}>Up to</label>
+          <input type="date" style={{ ...s.input, padding: '8px 10px', width: 160 }} value={toDate || todayStr()} onChange={(e) => setToDate?.(e.target.value)} />
+        </div>
+      )}
     </div>
   )
 }
 
 // ─── Custom hooks ─────────────────────────────────────────────
-function useFiltered(transactions, range) {
+function useFiltered(transactions, range, toDate = todayStr()) {
   const starts = { daily: todayStr(), weekly: getWeekStart(), monthly: getMonthStart() }
-  return transactions.filter((t) => t.date >= starts[range])
+  if (range === 'all') {
+    return transactions.filter((t) => t.date <= toDate)
+  }
+  const start = starts[range]
+  return transactions.filter((t) => t.date >= start && t.date <= toDate)
 }
 
 function useSummary(filtered) {
@@ -639,6 +641,7 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState('dashboard')
   const [range, setRange] = useState('daily')
+  const [toDate, setToDate] = useState(todayStr())
   const [showIncome, setShowIncome] = useState(false)
   const [showExpense, setShowExpense] = useState(false)
   const [showEdit, setShowEdit] = useState(false)
@@ -721,9 +724,10 @@ export default function App() {
     load()
   }, [session])
 
-  const handleAuth = (user, sName) => {
-    setShopName(sName)
-    setSession({ user })
+  const handleAuth = async () => {
+    // Refresh session from Supabase (ensures persistence across reloads)
+    const { data: { session } } = await supabase.auth.getSession()
+    setSession(session)
   }
 
   const handleLogout = async () => {
@@ -828,9 +832,9 @@ export default function App() {
 
       {/* Content */}
       <div style={{ padding: '1rem 1.25rem 100px', overflowY: 'auto' }}>
-        {activeTab === 'dashboard' && <Dashboard transactions={transactions} range={range} onRange={setRange} onDelete={handleDelete} onEdit={handleEdit} loading={txLoading} />}
-        {activeTab === 'entries' && <EntriesTab transactions={transactions} range={range} onRange={setRange} onDelete={handleDelete} onEdit={handleEdit} loading={txLoading} />}
-        {activeTab === 'reports' && <ReportsTab transactions={transactions} range={range} onRange={setRange} shopName={shopName} loading={txLoading} />}
+        {activeTab === 'dashboard' && <Dashboard transactions={transactions} range={range} onRange={setRange} onDelete={handleDelete} onEdit={handleEdit} loading={txLoading} toDate={toDate} setToDate={setToDate} />}
+        {activeTab === 'entries' && <EntriesTab transactions={transactions} range={range} onRange={setRange} onDelete={handleDelete} onEdit={handleEdit} loading={txLoading} toDate={toDate} setToDate={setToDate} />}
+        {activeTab === 'reports' && <ReportsTab transactions={transactions} range={range} onRange={setRange} shopName={shopName} loading={txLoading} toDate={toDate} setToDate={setToDate} />}
       </div>
 
       {/* Bottom nav */}
