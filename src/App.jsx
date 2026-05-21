@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { FixedSizeList as List } from 'react-window'
 import { supabase } from './lib/supabase'
 
 // ─── Constants ───────────────────────────────────────────────
@@ -182,7 +183,7 @@ function Dashboard({ transactions, range, onRange, onDelete, onEdit, loading, to
 
   return (
     <>
-      <RangePills range={range} onRange={onRange} />
+      <RangePills range={range} onRange={onRange} toDate={toDate} setToDate={setToDate} />
 
       {/* Profit banner */}
       <div style={{ background: summary.profit >= 0 ? C.primaryLight : C.dangerLight, borderRadius: 20, padding: '1.25rem 1.5rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -214,7 +215,11 @@ function Dashboard({ transactions, range, onRange, onDelete, onEdit, loading, to
       {loading ? (
         <div style={{ textAlign: 'center', padding: '2rem', color: C.muted }}>Loading…</div>
       ) : (
-        <TxList transactions={filtered.slice(0, 10)} onDelete={onDelete} onEdit={onEdit} />
+        range === 'all' ? (
+          <VirtualizedTxList transactions={filtered} onDelete={onDelete} onEdit={onEdit} />
+        ) : (
+          <TxList transactions={filtered.slice(0, 10)} onDelete={onDelete} onEdit={onEdit} />
+        )
       )}
     </>
   )
@@ -235,7 +240,7 @@ function EntriesTab({ transactions, range, onRange, onDelete, onEdit, loading, t
           <div style={{ fontSize: 13, marginTop: 6 }}>Add your first sale or expense</div>
         </div>
       ) : (
-        <TxList transactions={filtered} onDelete={onDelete} onEdit={onEdit} />
+        <VirtualizedTxList transactions={filtered} onDelete={onDelete} onEdit={onEdit} />
       )}
     </>
   )
@@ -404,6 +409,48 @@ function TxList({ transactions, onDelete, onEdit }) {
           </div>
         </div>
       ))}
+    </div>
+  )
+}
+
+// ─── Virtualized Transaction List (for large lists) ─────────────────
+function VirtualizedTxList({ transactions, onDelete, onEdit }) {
+  const itemSize = 80
+  const Row = ({ index, style, data }) => {
+    const t = data[index]
+    return (
+      <div style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: index < data.length - 1 ? `1px solid ${C.light}` : 'none' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 12, background: t.type === 'income' ? C.primaryLight : C.dangerLight, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>
+            {t.type === 'income' ? (t.subtype === 'cash' ? '💵' : '📱') : '🧾'}
+          </div>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{t.type === 'income' ? (t.subtype === 'cash' ? 'Cash Sale' : 'UPI Sale') : 'Expense'}</div>
+            <div style={{ fontSize: 12, color: C.muted }}>{t.note || '—'} · {fmtDate(t.date)}</div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: t.type === 'income' ? C.primary : C.danger }}>
+            {t.type === 'income' ? '+' : '-'}{fmtCurrency(t.amount)}
+          </div>
+          {onEdit && (
+            <button onClick={() => onEdit(t)} style={{ background: C.light, border: 'none', cursor: 'pointer', color: C.muted, fontSize: 13, padding: '5px 8px', borderRadius: 8 }}>✎</button>
+          )}
+          {onDelete && (
+            <button onClick={() => onDelete(t.id)} style={{ background: C.dangerLight, border: 'none', cursor: 'pointer', color: C.danger, fontSize: 13, padding: '5px 8px', borderRadius: 8 }}>✕</button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  const height = Math.min(600, transactions.length * itemSize)
+
+  return (
+    <div style={s.card}>
+      <List height={height} itemCount={transactions.length} itemSize={itemSize} width={'100%'} itemData={transactions}>
+        {Row}
+      </List>
     </div>
   )
 }
